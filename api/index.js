@@ -2,46 +2,58 @@ const express = require("express");
 const cors = require("cors");
 
 const app = express();
-
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type"]
-}));
-
-app.options("*", cors());
+app.use(cors());
 app.use(express.json());
 
 // ── Personal Details (UPDATE THESE) ──────────────────────────────────────────
-const USER_ID = "osheenmahajan_01122004";
-const EMAIL_ID = "osheen0675.be23@chitkara.edu.in";
-const ROLL_NUMBER = "2310990675";
+const USER_ID = "osheenmahajan_01122004";       // e.g. "johndoe_17091999"
+const EMAIL_ID = "osheen0675.be23@chitkara.edu.in"; // your college email
+const ROLL_NUMBER = "2310990675";            // your roll number
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Validate & parse a single entry. Returns { parent, child } or null. */
 function parseEntry(raw) {
   const entry = raw.trim();
+
+  // Must contain "->"
   if (!entry.includes("->")) return null;
+
   const [left, right] = entry.split("->", 2);
+
+  // Exactly one uppercase letter on each side
   const single = /^[A-Z]$/;
   if (!single.test(left) || !single.test(right)) return null;
+
+  // Self-loop is invalid
   if (left === right) return null;
+
   return { parent: left, child: right };
 }
 
+/** Build hierarchies from valid, deduplicated edges. */
 function buildHierarchies(edges) {
-  const children = {};
-  const parentOf = {};
+  // Track children of each node and parents of each node
+  const children = {}; // parent -> [children]
+  const parentOf = {}; // child -> first parent that claimed it
 
   for (const { parent, child } of edges) {
+    // Diamond / multi-parent: first parent wins
     if (parentOf[child] !== undefined) continue;
     parentOf[child] = parent;
+
     if (!children[parent]) children[parent] = [];
     children[parent].push(child);
+    // Ensure child is registered
     if (!children[child]) children[child] = [];
   }
 
+  // All nodes
   const allNodes = new Set([...Object.keys(children), ...Object.keys(parentOf)]);
 
+  // Roots = nodes that never appear as a child
+  const roots = [...allNodes].filter((n) => parentOf[n] === undefined);
+
+  // Find connected components using undirected adjacency
   const adjacency = {};
   for (const node of allNodes) adjacency[node] = new Set();
   for (const { parent, child } of edges) {
@@ -77,14 +89,18 @@ function buildHierarchies(edges) {
   const hierarchies = [];
 
   for (const comp of components) {
+    // Root(s) in this component
     const compRoots = [...comp].filter((n) => parentOf[n] === undefined);
+
     let root;
     if (compRoots.length > 0) {
-      root = compRoots.sort()[0];
+      root = compRoots.sort()[0]; // lexicographically smallest root
     } else {
+      // Pure cycle — no root; use lex-smallest node
       root = [...comp].sort()[0];
     }
 
+    // Detect cycle with DFS
     const hasCycle = detectCycle(root, children, comp);
 
     if (hasCycle) {
@@ -135,6 +151,7 @@ function calcDepth(root, children) {
   return 1 + max;
 }
 
+// ── POST /bfhl ────────────────────────────────────────────────────────────────
 app.post("/bfhl", (req, res) => {
   const data = req.body?.data;
 
@@ -162,6 +179,7 @@ app.post("/bfhl", (req, res) => {
     const key = `${parsed.parent}->${parsed.child}`;
 
     if (seenEdges.has(key)) {
+      // Only push once to duplicate_edges regardless of repetitions
       if (!duplicateEdges.includes(key)) {
         duplicateEdges.push(key);
       }
@@ -173,6 +191,7 @@ app.post("/bfhl", (req, res) => {
 
   const hierarchies = buildHierarchies(validEdges);
 
+  // Summary
   const nonCyclic = hierarchies.filter((h) => !h.has_cycle);
   const cyclic = hierarchies.filter((h) => h.has_cycle);
 
